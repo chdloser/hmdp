@@ -27,13 +27,18 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
 
     @Override
     public Result sendCode(String phone, HttpSession session) {
+        //检验手机号
         if(RegexUtils.isPhoneInvalid(phone)){
+            //手机号不对，直接返回错误信息
             return Result.fail("手机号格式错误");
         }
+        //生成验证码，这里用随机数
         String code = RandomUtil.randomNumbers(6);
-
+        //将验证码保持到Session
         session.setAttribute("code",code);
+        //假设发送验证码
         log.info("验证码：{}",code);
+        //返回OK
         return Result.ok();
     }
 
