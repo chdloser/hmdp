@@ -12,6 +12,7 @@ import com.hmdp.mapper.UserMapper;
 import com.hmdp.service.IUserService;
 import com.hmdp.utils.RedisConstants;
 import com.hmdp.utils.RegexUtils;
+import com.hmdp.utils.UserHolder;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
@@ -75,12 +76,14 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
         if (user == null) {
             user = createUserWithPhone(phone);
         }
-
-        //登录成功后，将基本信息UserDTO存入Redis
-        //  生成随机token作为令牌
-        String token = UUID.randomUUID().toString();
+        //将User转为Dto
         UserDTO userDTO = BeanUtil.copyProperties(user, UserDTO.class);
-        String tokenKey = RedisConstants.LOGIN_USER_KEY + token;
+        //将Dto存入ThreadLocal
+        UserHolder.saveUser(userDTO);
+        //登录成功后，将基本信息UserDTO存入Redis
+        //生成随机token作为令牌
+        String token = UUID.randomUUID().toString();
+        String tokenKey = RedisConstants.LOGIN_USER_KEY + token; //redisKey规范命名
         //stringTemplate要求所有key和value都是String，这里构建map时把对象属性都转换String
         Map<String, Object> userMap = BeanUtil.beanToMap(userDTO,
                 new HashMap<>(),
