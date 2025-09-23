@@ -1,5 +1,6 @@
 package com.hmdp.service.impl;
 
+import cn.hutool.core.util.BooleanUtil;
 import cn.hutool.core.util.StrUtil;
 import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
@@ -43,16 +44,42 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
         if("".equals(shopJson)){
             return Result.fail("店铺不存在");
         }
-        //缓存未命中，查询数据库
-        Shop shop = getById(id);
-        //数据库存在，写入Redis
-        if(shop != null){
-            stringRedisTemplate.opsForValue().set(key,JSONUtil.toJsonStr(shop),RedisConstants.CACHE_SHOP_TTL, TimeUnit.MINUTES);
-            return Result.ok(shop);
+        //缓存未命中，重建缓存
+        //获取互斥锁
+        String lockKey = RedisConstants.LOCK_SHOP_KEY+id;
+        try {
+            boolean lock = tryLock(lockKey);
+            //判断锁情况
+            if(!lock){
+                //获取锁失败，休眠并重试
+                try {
+                    Thread.sleep(100);
+                    //重试-> 递归
+                    return queryById(id);
+                } catch (InterruptedException e) {
+                    throw new RuntimeException(e);
+                }
+            }
+            //获取锁成功，查询数据，写入Redis
+            Shop shop = getById(id);
+            Thread.sleep(500); //模拟重建缓存耗时
+            //数据库存在，写入Redis
+            if(shop != null){
+                stringRedisTemplate.opsForValue().set(key,JSONUtil.toJsonStr(shop),RedisConstants.CACHE_SHOP_TTL, TimeUnit.MINUTES);
+                return Result.ok(shop);
+            }
+            //数据库没有，缓存空值后返回错误
+            stringRedisTemplate.opsForValue().set(key,"",2, TimeUnit.MINUTES);
+            return Result.fail("店铺不存在");
+        } catch (RuntimeException e) {
+            System.err.println("异常："+e);
+            throw e;
+        } catch (InterruptedException e) {
+            throw new RuntimeException(e);
+        } finally {
+            //释放互斥锁
+            unlock(lockKey);
         }
-        //数据库没有，缓存空值后返回错误
-        stringRedisTemplate.opsForValue().set(key,"",2, TimeUnit.MINUTES);
-        return Result.fail("店铺不存在");
     }
 
     @Override
@@ -67,5 +94,12 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
         //再更新缓存
         stringRedisTemplate.delete(RedisConstants.CACHE_SHOP_KEY+id);
         return Result.ok();
+    }
+    private boolean tryLock(String key){
+        Boolean b = stringRedisTemplate.opsForValue().setIfAbsent(key, "1", 10, TimeUnit.SECONDS);
+        return BooleanUtil.isTrue(b);
+    }
+    private void unlock(String key){
+        stringRedisTemplate.delete(key);
     }
 }
