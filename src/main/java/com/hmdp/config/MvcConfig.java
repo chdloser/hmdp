@@ -20,6 +20,8 @@ public class MvcConfig implements WebMvcConfigurer {
      */
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
+        //token拦截器会拦截所有请求
+        registry.addInterceptor(new RefreshTokenInterceptor(stringRedisTemplate));//设置优先，因为刷新token时会查询用户存ThreadLocal，先登录校验ThreadLocal是空的的，会被拦截。
         //登录拦截器
         registry.addInterceptor(new LoginInterceptor())
                 //排除不需要拦截的目录
@@ -31,8 +33,6 @@ public class MvcConfig implements WebMvcConfigurer {
                         "/blog/hot",
                         "/user/code",
                         "/user/login"
-                );
-        //token拦截器会拦截所有请求
-        registry.addInterceptor(new RefreshTokenInterceptor(stringRedisTemplate));
-    }
+                ).order(1);
+       }
 }
