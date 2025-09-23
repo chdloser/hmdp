@@ -39,7 +39,6 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
         }
         //缓存未命中，查询数据库
         Shop shop = getById(id);
-
         //数据库存在，写入Redis
         if(shop != null){
             stringRedisTemplate.opsForValue().set(key,JSONUtil.toJsonStr(shop));
