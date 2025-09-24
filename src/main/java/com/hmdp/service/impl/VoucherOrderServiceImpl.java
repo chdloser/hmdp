@@ -9,8 +9,10 @@ import com.hmdp.mapper.VoucherOrderMapper;
 import com.hmdp.service.IVoucherOrderService;
 import com.hmdp.service.IVoucherService;
 import com.hmdp.utils.RedisWorker;
+import com.hmdp.utils.SimpleRedisLock;
 import com.hmdp.utils.UserHolder;
 import org.springframework.aop.framework.AopContext;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -33,6 +35,9 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
     @Resource
     private RedisWorker redisWorker;
 
+    @Resource
+    private StringRedisTemplate stringRedisTemplate;
+
     @Override
     public Result secKillVoucher(Long voucherId) {
         //查询优惠券
@@ -51,10 +56,19 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
         }
         //下单逻辑
         String userId = UserHolder.getUser().getId().toString();
-        synchronized (userId.intern()) {
+        //获取分布式锁
+        SimpleRedisLock redisLock = new SimpleRedisLock(stringRedisTemplate, "order:" + userId);
+        boolean lock = redisLock.tryLock(20);
+        //拿锁失败
+        if (!lock) {
+            return Result.fail("不允许重复下单");
+        }
+        try {
             //获取代理对象处理事务
-            IVoucherOrderService proxy =(IVoucherOrderService) AopContext.currentProxy();
+            IVoucherOrderService proxy = (IVoucherOrderService) AopContext.currentProxy();
             return proxy.createOrder(voucherId);
+        } finally {
+            redisLock.unlock();
         }
     }
 
