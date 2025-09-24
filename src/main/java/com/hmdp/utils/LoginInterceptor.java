@@ -14,7 +14,12 @@ public class LoginInterceptor implements HandlerInterceptor {
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
         //只用判断用户是否存在。
         UserDTO user = UserHolder.getUser();
-        return user != null;
+        if (user == null) {
+            // 未登录，设置响应状态码为 401
+            response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+            return true;
+        }
+        return true;
     }
 
     @Override
