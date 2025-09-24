@@ -12,12 +12,15 @@ import com.hmdp.utils.RedisWorker;
 import com.hmdp.utils.SimpleRedisLock;
 import com.hmdp.utils.UserHolder;
 import org.springframework.aop.framework.AopContext;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import javax.annotation.Resource;
 import java.time.LocalDateTime;
+import java.util.Collections;
 
 /**
  * <p>
@@ -38,6 +41,30 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
     @Resource
     private StringRedisTemplate stringRedisTemplate;
 
+    private static final DefaultRedisScript<Long> secKill_script;
+
+    static {
+        secKill_script = new DefaultRedisScript<>();
+        secKill_script.setLocation(new ClassPathResource("seckill.lua"));
+        secKill_script.setResultType(Long.class);
+    }
+
+    private Result secKillVoucherWithCache(Long voucherId){
+        //执行lua
+        UserDTO user = UserHolder.getUser();
+        Long result = stringRedisTemplate.execute(secKill_script, Collections.emptyList(), voucherId.toString(), user.getId().toString());
+        //判断结果
+        int r = result.intValue();
+        //不为0，代表没有抢购资格
+        if(r != 0){
+            return Result.fail(r==1?"库存不足":"已经购买");
+        }
+        //为0，把下单信息保存到队列
+
+        //返回订单id
+        long orderId = redisWorker.nextId("order");
+        return Result.ok(orderId);
+    }
     @Override
     public Result secKillVoucher(Long voucherId) {
         //查询优惠券
