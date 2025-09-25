@@ -1,5 +1,6 @@
 package com.hmdp.service.impl;
 
+import cn.hutool.core.bean.BeanUtil;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.hmdp.dto.Result;
 import com.hmdp.dto.UserDTO;
@@ -12,6 +13,7 @@ import com.hmdp.utils.RedisWorker;
 import com.hmdp.utils.SimpleRedisLock;
 import com.hmdp.utils.UserHolder;
 import org.springframework.core.io.ClassPathResource;
+import org.springframework.data.redis.connection.stream.*;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Service;
@@ -19,8 +21,11 @@ import org.springframework.transaction.annotation.Transactional;
 
 import javax.annotation.PostConstruct;
 import javax.annotation.Resource;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.Collections;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ExecutorService;
@@ -55,19 +60,69 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
         secKill_script.setResultType(Long.class);
     }
     private IVoucherOrderService proxy;
+    String queueName = "stream.orders";
 
     @PostConstruct
     private void init(){
         executor.submit(()->{
             while (true){
                 try {
-                    VoucherOrder voucherOrder = orderTasks.take();
+                    //获取消息队列中的订单信息
+                    List<MapRecord<String, Object, Object>> list = stringRedisTemplate.opsForStream().read(
+                            Consumer.from("g1", "c1"),
+                            StreamReadOptions.empty().count(1).block(Duration.ofSeconds(2)),
+                            StreamOffset.create(queueName, ReadOffset.latest())
+                    );
+                    //判断消息是否获取成功
+                    if(list==null||list.isEmpty()){
+                        //如果失败，说明没有消息，进入下一次循环
+                        continue;
+                    }
+                    //解析订单信息
+                    MapRecord<String, Object, Object> record = list.get(0);
+                    Map<Object, Object> value = record.getValue();
+                    VoucherOrder voucherOrder = BeanUtil.fillBeanWithMap(value, new VoucherOrder(), true);
+                    //获取成功，可以下单
                     handleVoucherOrder(voucherOrder);
-                } catch (InterruptedException e) {
-                    throw new RuntimeException(e);
+                    //ACK确认
+                    stringRedisTemplate.opsForStream().acknowledge(queueName,"g1","c1");
+                } catch (Exception e) {
+                    log.error("消息处理异常");
+                    handlePendingList();
                 }
             }
         });
+    }
+
+    /**
+     * 出现异常后，处理pendList中的异常消息
+     */
+    private void handlePendingList() {
+        while (true){
+            try {
+                //获取pendingList中的订单信息
+                List<MapRecord<String, Object, Object>> list = stringRedisTemplate.opsForStream().read(
+                        Consumer.from("g1", "c1"),
+                        StreamReadOptions.empty().count(1),
+                        StreamOffset.create(queueName, ReadOffset.from("0"))
+                );
+                //判断消息是否获取成功
+                if(list==null||list.isEmpty()){
+                    //如果失败，说明没有异常消息
+                    break;
+                }
+                //解析订单信息
+                MapRecord<String, Object, Object> record = list.get(0);
+                Map<Object, Object> value = record.getValue();
+                VoucherOrder voucherOrder = BeanUtil.fillBeanWithMap(value, new VoucherOrder(), true);
+                //获取成功，可以下单
+                handleVoucherOrder(voucherOrder);
+                //ACK确认
+                stringRedisTemplate.opsForStream().acknowledge(queueName,"g1","c1");
+            } catch (Exception e) {
+                log.error("消息pendingList异常");
+            }
+        }
     }
 
     //处理下单任务的逻辑
