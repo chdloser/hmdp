@@ -15,4 +15,10 @@ import com.hmdp.entity.Blog;
 public interface IBlogService extends IService<Blog> {
 
     Result saveBolg(Blog blog);
+
+    Result queryBlogOfFollow(Long max, Integer offset);
+
+    Result queryBlogById(Long id);
+
+    Result queryHotBlog(Integer current);
 }
