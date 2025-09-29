@@ -1,5 +1,6 @@
 package com.hmdp.service.impl;
 
+import cn.hutool.core.util.BooleanUtil;
 import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
@@ -27,7 +28,7 @@ import java.util.Set;
 
 /**
  * <p>
- *  服务实现类
+ * 服务实现类
  * </p>
  *
  * @author 虎哥
@@ -55,7 +56,7 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
         blog.setUserId(user.getId());
         // 保存探店博文笔记
         boolean success = save(blog);
-        if (!success){
+        if (!success) {
             return Result.fail("新建笔记失败");
         }
         //查询所有粉丝
@@ -63,20 +64,21 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
         //将发布的笔记推送给粉丝
         for (Follow follow : follows) {
             Long id = follow.getId();
-            String key = "feed:"+id;
-            redisTemplate.opsForZSet().add(key,blog.getId().toString(),System.currentTimeMillis());
+            String key = "feed:" + id;
+            redisTemplate.opsForZSet().add(key, blog.getId().toString(), System.currentTimeMillis());
         }
         // 返回id
         return Result.ok(blog.getId());
     }
+
     @Override
     public Result queryBlogOfFollow(Long max, Integer offset) {
         //从当前用户获取key
         Long userId = UserHolder.getUser().getId();
-        String key = RedisConstants.FEED_KEY+userId;
+        String key = RedisConstants.FEED_KEY + userId;
         //找到收件箱
         Set<ZSetOperations.TypedTuple<String>> tuples = stringRedisTemplate.opsForZSet().reverseRangeByScoreWithScores(key, 0, max, offset, 2);
-        if(tuples==null || tuples.isEmpty()){
+        if (tuples == null || tuples.isEmpty()) {
             return Result.ok();
         }
         //解析数据，blogId,minTime,offset
@@ -89,24 +91,24 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
                 ids.add(Long.valueOf(idStr));
             }
             long time = tuple.getScore().longValue();
-            if(time == minTime){
+            if (time == minTime) {
                 off++;
-            }else{
+            } else {
                 minTime = time;
                 off = 0;
             }
         }
         //根据id查询blog
-        String idStr = StrUtil.join(",",ids);
-        List<Blog> blogs = query().in("id",ids).last("order by field(id,"+idStr+")").list();
+        String idStr = StrUtil.join(",", ids);
+        List<Blog> blogs = query().in("id", ids).last("order by field(id," + idStr + ")").list();
         ScrollResult result = new ScrollResult();
         for (Blog blog : blogs) {
             queryBlogUser(blog);
-            isBlogLiked(blog);
+            likeBlog(blog.getId());
         }
         //封装后返回
         result.setList(blogs);
-        result.setOffset(offset);
+        result.setOffset(off);
         result.setMinTime(minTime);
         return Result.ok(blogs);
 
@@ -116,11 +118,22 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
     public Result queryBlogById(Long id) {
         //查询Blog
         Blog blog = getById(id);
-        if(blog==null){
+        if (blog == null) {
             return Result.fail("笔记不存在");
         }
         queryBlogUser(blog);
+        //查询blog是否被点赞
+        isBlogLiked(blog);
         return Result.ok(blog);
+    }
+
+    private void isBlogLiked(Blog blog) {
+        //获取登录用户
+        UserDTO user = UserHolder.getUser();
+        //判断当前用户是否已经点赞
+        String key = "blog:liked:"+blog.getId();
+        Boolean isMember = stringRedisTemplate.opsForSet().isMember(key,user.getId());
+        blog.setIsLike(BooleanUtil.isTrue(isMember));
     }
 
     @Override
@@ -143,6 +156,27 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
         blog.setIcon(user.getIcon());
     }
 
-    private void isBlogLiked(Blog blog) {
+    private void likeBlog(Long id) {
+        //获取登录用户
+        UserDTO user = UserHolder.getUser();
+        //判断当前用户是否已经点赞
+        String key = "blog:liked:" + id;
+        Boolean isMember = stringRedisTemplate.opsForSet().isMember(key, user.getId());
+        //未点赞时，可以点赞
+        if (BooleanUtil.isTrue(isMember)) {
+            //数据库点赞+1
+            boolean updated = update().setSql("like = like + 1").eq("id", id).update();
+            //保存用户到Redis集合
+            if (updated) {
+                stringRedisTemplate.opsForSet().add(key, user.getId().toString());
+            }
+        } else {
+            //已经点赞，取消点赞
+            boolean updated = update().setSql("like = like -1").eq("id", id).update();
+            //把用户从Redis的Set中移除
+            if (updated) {
+                stringRedisTemplate.opsForSet().remove(key, user.getId().toString());
+            }
+        }
     }
 }
