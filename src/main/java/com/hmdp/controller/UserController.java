@@ -48,7 +48,6 @@ public class UserController {
      */
     @PostMapping("/login")
     public Result login(@RequestBody LoginFormDTO loginForm, HttpSession session){
-        // TODO 实现登录功能
         return userService.login(loginForm,session);
     }
 
@@ -95,5 +94,11 @@ public class UserController {
         UserDTO userDTO = BeanUtil.copyProperties(info,UserDTO.class);
         return Result.ok(userDTO);
     }
-
+    /**
+     * 用户签到（当天）
+     */
+    @PostMapping("/sign")
+    public Result sign(){
+        return userService.sign();
+    }
 }
